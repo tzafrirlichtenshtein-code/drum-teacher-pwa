@@ -926,13 +926,21 @@ function DrumApp() {
     }
   };
 
+  // Parse DD/MM/YYYY into a Date at local midnight
+  const parseDDMMYYYY = (s) => {
+    if (!s) return null;
+    const m = String(s).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!m) return null;
+    return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  };
+
   // ═══ Filter by tab ═══
   const today = useMemo(() => {
     const t = new Date();
     t.setHours(0,0,0,0);
     return allLessons.filter(l => {
-      if (!l.date) return false;
-      const d = new Date(l.date);
+      const d = parseDDMMYYYY(l.date);
+      if (!d) return false;
       d.setHours(0,0,0,0);
       return d.getTime() === t.getTime();
     });
@@ -942,8 +950,8 @@ function DrumApp() {
     const t = new Date();
     t.setHours(0,0,0,0);
     return allLessons.filter(l => {
-      if (!l.date) return false;
-      const d = new Date(l.date);
+      const d = parseDDMMYYYY(l.date);
+      if (!d) return false;
       d.setHours(0,0,0,0);
       return d.getTime() > t.getTime();
     });
