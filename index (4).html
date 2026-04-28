@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>השיעורים שלי</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      background: #0a0a0a;
+      font-family: 'Heebo', system-ui, -apple-system, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    body { overflow: hidden; }
+    * { box-sizing: border-box; }
+    button { font-family: inherit; }
+
+    #root {
+      width: 100%;
+      height: 100vh;
+      height: 100dvh;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 999px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    main::-webkit-scrollbar { width: 0; }
+
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes toastIn {
+      from { transform: translateY(8px); opacity: 0; }
+      to   { transform: translateY(0);   opacity: 1; }
+    }
+  </style>
+
+  <!-- React 18 + Babel -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="env,react">
+// ════════════════════════════════════════════════════════════════════
+// CONFIG — n8n webhooks + Cal.com links
+// ════════════════════════════════════════════════════════════════════
+const N8N_BASE = 'https://n8n-izk6.srv1570838.hstgr.cloud/webhook';
+const LESSONS_ENDPOINT = `${N8N_BASE}/pwa-lessons`;
+const STATUS_ENDPOINT  = `${N8N_BASE}/pwa-status`;
+
+// Cal.com booking links — fill these once configured in Cal.com
+const CAL_LINKS = {
+  drum60:  '#',  // TODO: https://cal.com/tzafrir/drum-60
+  drum45:  '#',
+  drum30:  '#',
+  intro:   '#',
+  studio:  '#',
+};
+
+const { useState, useEffect, useMemo, useRef } = React;
+
+// ════════════════════════════════════════════════════════════════════
+// Status meta
+// ════════════════════════════════════════════════════════════════════
+const STATUS_META = {
+  done:      { label: 'בוצע',    color: '#22c55e', glyph: '✓', bgTint: 'rgba(34,197,94,0.10)',  border: 'rgba(34,197,94,0.35)' },
+  no_show:   { label: 'לא הגיע', color: '#ef4444', glyph: '✗', bgTint: 'rgba(239,68,68,0.10)',  border: 'rgba(239,68,68,0.35)' },
+  cancelled: { label: 'בוטל',    color: '#a78bfa', glyph: '–', bgTint: 'rgba(167,139,250,0.10)', border: 'rgba(167,139,250,0.35)' },
+};
+
+// Map between server status (Hebrew) and UI keys
+const STATUS_TO_KEY = {
+  'בוצע': 'done',
+  'לא הגיע': 'no_show',
+  'בוטל': 'cancelled',
+  'מתקיים': '',
+  '': '',
+};
+const KEY_TO_STATUS = {
+  'done': 'בוצע',
+  'no_show': 'לא הגיע',
+  'cancelled': 'בוטל',
+  '': 'מתקיים',
+};
+
+const HEBREW_DAYS   = ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'שבת'];
+const HEBREW_MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+
+function formatHebrewDate(d) {
+  return `${HEBREW_DAYS[d.getDay()]}, ${d.getDate()} ${HEBREW_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+// Day-label for week view ("היום", "מחר", "יום ראשון" etc.)
+function dayLabelFor(date) {
+  const d = new Date(date);
+  d.setHours(0,0,0,0);
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const diff = Math.round((d - today) / 86400000);
+  if (diff === 0) return 'היום';
+  if (diff === 1) return 'מחר';
+  if (diff === -1) return 'אתמול';
+  return HEBREW_DAYS[d.getDay()];
+}
+
+// Booking options
+const BOOKING_OPTIONS = [
+  { id: 'b1', icon: '🥁',  title: 'שיעור תופים',   duration: '60 דק׳', price: '₪300', href: CAL_LINKS.drum60 },
+  { id: 'b2', icon: '🥁',  title: 'שיעור תופים',   duration: '45 דק׳', price: '₪250', href: CAL_LINKS.drum45 },
+  { id: 'b3', icon: '🥁',  title: 'שיעור תופים',   duration: '30 דק׳', price: '₪180', href: CAL_LINKS.drum30 },
+  { id: 'b4', icon: '🎓',  title: 'שיעור היכרות',  duration: '60 דק׳', price: '₪180', href: CAL_LINKS.intro  },
+  { id: 'b5', icon: '🏋️', title: 'אימון בסטודיו', duration: 'גמיש',   price: 'חינם', href: CAL_LINKS.studio },
+];
+
+// ════════════════════════════════════════════════════════════════════
+// Icons
+// ════════════════════════════════════════════════════════════════════
+const Icon = {
+  plus: (s = 20) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+      <path d="M12 5v14M5 12h14"/>
+    </svg>
+  ),
+  refresh: (s = 18) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12a9 9 0 1 1-3.5-7.1"/>
+      <path d="M21 4v5h-5"/>
+    </svg>
+  ),
+  close: (s = 22) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+      <path d="M6 6l12 12M18 6L6 18"/>
+    </svg>
+  ),
+  empty: (s = 56) => (
+    <svg width={s} height={s} viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <ellipse cx="32" cy="22" rx="20" ry="6"/>
+      <path d="M12 22v18c0 3.3 9 6 20 6s20-2.7 20-6V22"/>
+      <path d="M12 31c0 3.3 9 6 20 6s20-2.7 20-6"/>
+    </svg>
+  ),
+  arrowOut: (s = 16) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 5h5v5"/>
+      <path d="M19 5l-8 8"/>
+      <path d="M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/>
+    </svg>
+  ),
+};
+
+// ════════════════════════════════════════════════════════════════════
+// Stat tile
+// ════════════════════════════════════════════════════════════════════
+function StatTile({ value, label, accent }) {
+  return (
+    <div style={{
+      flex: 1, padding: '14px 12px',
+      borderRadius: 14,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.06)',
+      display: 'flex', flexDirection: 'column', gap: 4,
+      position: 'relative', overflow: 'hidden',
+    }}>
+      <div style={{
+        position: 'absolute', top: 0, right: 0, width: 3, height: '100%',
+        background: accent, opacity: 0.85,
+      }}/>
+      <div style={{
+        fontSize: 26, fontWeight: 700, color: '#f0f0f0',
+        fontFeatureSettings: '"tnum"', letterSpacing: '-0.02em', lineHeight: 1,
+      }}>{value}</div>
+      <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', fontWeight: 500 }}>{label}</div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Status pill button
+// ════════════════════════════════════════════════════════════════════
+function StatusButton({ kind, onClick }) {
+  const meta = STATUS_META[kind];
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        flex: 1, height: 40,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        borderRadius: 10,
+        background: meta.bgTint,
+        border: `1px solid ${meta.border}`,
+        color: meta.color,
+        fontSize: 13.5, fontWeight: 600,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        transition: 'transform 120ms ease, background 160ms ease',
+        WebkitTapHighlightColor: 'transparent',
+      }}
+      onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.97)'}
+      onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+      onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+    >
+      <span style={{ fontSize: 15, fontWeight: 700, lineHeight: 1 }}>{meta.glyph}</span>
+      <span>{meta.label}</span>
+    </button>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// Group Lesson card — accordion with per-student status buttons
+// ════════════════════════════════════════════════════════════════════
+function GroupLessonCard({ lesson, onSaveGroup, showDay = false }) {
+  const [expanded, setExpanded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // Local mutable copy of participant statuses (so user can mark several before saving)
+  const [localParticipants, setLocalParticipants] = useState(lesson.participants);
+
+  // Resync if upstream lesson.participants changes (e.g. after refresh)
+  useEffect(() => {
+    setLocalParticipants(lesson.participants);
+  }, [lesson.participants]);
+
+  const total = localParticipants.length;
+  const settledCount = localParticipants.filter(p => !!p.status).length;
+  const allSettled = total > 0 && settledCount === total;
+
+  // Has anything been changed locally vs what came from server?
+  const dirty = localParticipants.some((p, i) => p.status !== lesson.participants[i]?.status);
+
+  const setParticipantStatus = (attendanceId, statusKey) => {
+    setLocalParticipants(list =>
+      list.map(p => p.attendanceId === attendanceId ? { ...p, status: statusKey } : p)
+    );
+  };
+
+  const clearParticipant = (attendanceId) => {
+    setLocalParticipants(list =>
+      list.map(p => p.attendanceId === attendanceId ? { ...p, status: '' } : p)
+    );
+  };
+
+  const handleSaveAll = async () => {
+    setSaving(true);
+    try {
+      await onSaveGroup(lesson.id, localParticipants);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Subtle purple-tinted background to differentiate from private lessons
+  return (
+    <div style={{
+      position: 'relative',
+      borderRadius: 16,
+      background: 'linear-gradient(180deg, rgba(167,139,250,0.08) 0%, rgba(167,139,250,0.03) 100%)',
+      border: '1px solid rgba(167,139,250,0.22)',
+      padding: '14px 16px',
+      transition: 'all 240ms ease',
+      overflow: 'hidden',
+    }}>
+      {/* Header — clickable to toggle */}
+      <button
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          width: '100%', padding: 0, margin: 0,
+          background: 'transparent', border: 'none', textAlign: 'inherit',
+          cursor: 'pointer', fontFamily: 'inherit',
+          display: 'flex', gap: 14, alignItems: 'flex-start',
+        }}
+      >
+        <div style={{
+          minWidth: 64, textAlign: 'left',
+          fontFamily: '"Heebo", system-ui',
+          fontFeatureSettings: '"tnum"',
+          order: 2, marginInlineStart: 'auto',
+        }}>
+          <div style={{
+            fontSize: 22, fontWeight: 700, color: '#f0f0f0',
+            letterSpacing: '-0.01em', lineHeight: 1.1,
+          }}>{lesson.time}</div>
+          {showDay && lesson.dayLabel && (
+            <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)', marginTop: 4, fontWeight: 500 }}>
+              {lesson.dayLabel}
+            </div>
+          )}
+        </div>
+
+        <div style={{ order: 1, flex: 1, minWidth: 0 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2,
+          }}>
+            <span style={{
+              fontSize: 10.5, fontWeight: 700, color: '#c4b5fd',
+              background: 'rgba(167,139,250,0.18)',
+              padding: '2px 8px', borderRadius: 999,
+              letterSpacing: '0.02em',
+            }}>קבוצתי</span>
+            <span style={{
+              fontSize: 11.5, color: 'rgba(255,255,255,0.5)', fontWeight: 500,
+            }}>{settledCount}/{total} סומנו</span>
+          </div>
+          <div style={{
+            fontSize: 17, fontWeight: 600, color: '#f0f0f0',
+            letterSpacing: '-0.01em',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>{lesson.groupName || lesson.studentName}</div>
+          <div style={{
+            fontSize: 12.5, color: 'rgba(255,255,255,0.42)', fontWeight: 500,
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+            <span>{total} משתתפים</span>
+            <span style={{
+              display: 'inline-block',
+              transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
+              transition: 'transform 200ms ease',
+              fontSize: 10, opacity: 0.6,
+            }}>▼</span>
+          </div>
+        </div>
+      </button>
+
+      {/* Accordion body */}
+      {expanded && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          {localParticipants.map((p) => {
+            const settled = !!p.status;
+            const meta = settled ? STATUS_META[p.status] : null;
+            return (
+              <div key={p.attendanceId} style={{
+                padding: '10px 0',
+                borderBottom: '1px solid rgba(255,255,255,0.04)',
+                opacity: settled ? 0.72 : 1,
+                transition: 'opacity 240ms ease',
+              }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: settled ? 4 : 8,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                    <span style={{
+                      fontSize: 14.5, fontWeight: 600, color: '#f0f0f0',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>{p.studentName}</span>
+                    {p.isPrivate && (
+                      <span style={{
+                        fontSize: 10, color: '#fbbf24',
+                        background: 'rgba(251,191,36,0.12)',
+                        border: '1px solid rgba(251,191,36,0.28)',
+                        padding: '1px 6px', borderRadius: 999,
+                        fontWeight: 600,
+                      }}>פרטי</span>
+                    )}
+                  </div>
+                  <span style={{
+                    fontSize: 12, color: 'rgba(255,255,255,0.4)', fontWeight: 500,
+                    fontFamily: '"Heebo", system-ui', fontFeatureSettings: '"tnum"',
+                  }}>₪{p.price}</span>
+                </div>
+
+                {!settled ? (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <StatusButton kind="done"      onClick={() => setParticipantStatus(p.attendanceId, 'done')} />
+                    <StatusButton kind="no_show"   onClick={() => setParticipantStatus(p.attendanceId, 'no_show')} />
+                    <StatusButton kind="cancelled" onClick={() => setParticipantStatus(p.attendanceId, 'cancelled')} />
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      padding: '4px 10px',
+                      borderRadius: 999,
+                      background: meta.bgTint,
+                      border: `1px solid ${meta.border}`,
+                      color: meta.color,
+                      fontSize: 12, fontWeight: 600,
+                    }}>
+                      <span style={{ fontWeight: 700 }}>{meta.glyph}</span>
+                      <span>{meta.label}</span>
+                    </div>
+                    <button
+                      onClick={() => clearParticipant(p.attendanceId)}
+                      style={{
+                        marginInlineStart: 'auto',
+                        background: 'transparent', border: 'none',
+                        color: 'rgba(255,255,255,0.5)',
+                        fontSize: 12, fontWeight: 500, fontFamily: 'inherit',
+                        cursor: 'pointer', padding: '4px',
+                      }}
+                    >שנה</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Save All button */}
+          <button
+            onClick={handleSaveAll}
+            disabled={!dirty || saving}
+            style={{
+              marginTop: 14, width: '100%',
+              padding: '12px 16px',
+              borderRadius: 12,
+              background: dirty && !saving
+                ? 'linear-gradient(180deg, #a78bfa 0%, #8b5cf6 100%)'
+                : 'rgba(255,255,255,0.06)',
+              border: 'none',
+              color: dirty && !saving ? '#fff' : 'rgba(255,255,255,0.4)',
+              fontSize: 14, fontWeight: 700, fontFamily: 'inherit',
+              cursor: dirty && !saving ? 'pointer' : 'not-allowed',
+              transition: 'all 200ms ease',
+              boxShadow: dirty && !saving ? '0 4px 14px rgba(139,92,246,0.35)' : 'none',
+            }}
+          >
+            {saving
+              ? 'שומר…'
+              : (allSettled ? 'שמור הכל' : (dirty ? `שמור (${settledCount}/${total})` : 'אין שינויים'))}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Lesson card
+// ════════════════════════════════════════════════════════════════════
+function LessonCard({ lesson, onSetStatus, onClearStatus, showDay = false }) {
+  const status = lesson.status;
+  const settled = !!status;
+  const meta = settled ? STATUS_META[status] : null;
+
+  return (
+    <div style={{
+      position: 'relative',
+      borderRadius: 16,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.07)',
+      padding: '14px 16px 14px 16px',
+      opacity: settled ? 0.62 : 1,
+      transition: 'opacity 240ms ease, transform 240ms ease',
+      overflow: 'hidden',
+    }}>
+      {settled && (
+        <div style={{
+          position: 'absolute', top: 0, bottom: 0, right: 0,
+          width: 4, background: meta.color,
+        }}/>
+      )}
+
+      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+        <div style={{
+          minWidth: 64, textAlign: 'left',
+          fontFamily: '"Heebo", system-ui',
+          fontFeatureSettings: '"tnum"',
+          order: 2, marginInlineStart: 'auto',
+        }}>
+          <div style={{
+            fontSize: 22, fontWeight: 700, color: '#f0f0f0',
+            letterSpacing: '-0.01em', lineHeight: 1.1,
+          }}>{lesson.time}</div>
+          {showDay && lesson.dayLabel && (
+            <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)', marginTop: 4, fontWeight: 500 }}>
+              {lesson.dayLabel}
+            </div>
+          )}
+        </div>
+
+        <div style={{ order: 1, flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 17, fontWeight: 600, color: '#f0f0f0',
+            letterSpacing: '-0.01em', marginBottom: 2,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>{lesson.studentName}</div>
+          <div style={{
+            fontSize: 12.5, color: 'rgba(255,255,255,0.42)', fontWeight: 500,
+          }}>{lesson.lessonType}</div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        {!settled ? (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <StatusButton kind="done"      onClick={() => onSetStatus(lesson.id, 'done')} />
+            <StatusButton kind="no_show"   onClick={() => onSetStatus(lesson.id, 'no_show')} />
+            <StatusButton kind="cancelled" onClick={() => onSetStatus(lesson.id, 'cancelled')} />
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '6px 12px',
+              borderRadius: 999,
+              background: meta.bgTint,
+              border: `1px solid ${meta.border}`,
+              color: meta.color,
+              fontSize: 13, fontWeight: 600,
+            }}>
+              <span style={{ fontWeight: 700 }}>{meta.glyph}</span>
+              <span>{meta.label}</span>
+            </div>
+            <button
+              onClick={() => onClearStatus(lesson.id)}
+              style={{
+                marginInlineStart: 'auto',
+                background: 'transparent', border: 'none',
+                color: 'rgba(255,255,255,0.55)',
+                fontSize: 13, fontWeight: 500, fontFamily: 'inherit',
+                cursor: 'pointer', padding: '6px 4px',
+              }}
+            >שנה</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Empty / Loading / Error states
+// ════════════════════════════════════════════════════════════════════
+function EmptyState({ message }) {
+  return (
+    <div style={{
+      padding: '64px 24px',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
+      color: 'rgba(255,255,255,0.35)',
+    }}>
+      {Icon.empty()}
+      <div style={{ fontSize: 14.5, color: 'rgba(255,255,255,0.5)', fontWeight: 500 }}>
+        {message}
+      </div>
+    </div>
+  );
+}
+
+function LoadingState() {
+  return (
+    <div style={{
+      padding: '64px 24px',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
+      color: 'rgba(255,255,255,0.4)',
+    }}>
+      <div style={{
+        width: 32, height: 32,
+        border: '2px solid rgba(255,255,255,0.08)',
+        borderTopColor: '#a78bfa',
+        borderRadius: '50%',
+        animation: 'spin 0.7s linear infinite',
+      }}/>
+      <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.5)', fontWeight: 500 }}>
+        טוען שיעורים...
+      </div>
+    </div>
+  );
+}
+
+function ErrorState({ message, onRetry }) {
+  return (
+    <div style={{
+      padding: '64px 24px',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
+      color: 'rgba(255,255,255,0.4)',
+    }}>
+      <div style={{ fontSize: 40 }}>⚠️</div>
+      <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)', textAlign: 'center', maxWidth: 280 }}>
+        {message}
+      </div>
+      {onRetry && (
+        <button onClick={onRetry} style={{
+          marginTop: 6,
+          padding: '8px 18px', borderRadius: 10,
+          background: 'rgba(167,139,250,0.14)',
+          border: '1px solid rgba(167,139,250,0.35)',
+          color: '#a78bfa',
+          fontSize: 13, fontWeight: 600,
+          cursor: 'pointer',
+        }}>נסה שוב</button>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Toast
+// ════════════════════════════════════════════════════════════════════
+function Toast({ message, accent }) {
+  if (!message) return null;
+  return (
+    <div style={{
+      position: 'fixed', left: 16, right: 16, bottom: 24,
+      zIndex: 80,
+      display: 'flex', justifyContent: 'center',
+      pointerEvents: 'none',
+    }}>
+      <div style={{
+        padding: '11px 18px',
+        borderRadius: 999,
+        background: 'rgba(20,20,20,0.92)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        color: '#f0f0f0',
+        fontSize: 13.5, fontWeight: 500,
+        boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+        display: 'flex', alignItems: 'center', gap: 8,
+        animation: 'toastIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+      }}>
+        {accent && <span style={{ color: accent, fontWeight: 700 }}>•</span>}
+        {message}
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Booking modal
+// ════════════════════════════════════════════════════════════════════
+function BookingModal({ open, onClose }) {
+  const [mounted, setMounted] = useState(open);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      requestAnimationFrame(() => setVisible(true));
+    } else {
+      setVisible(false);
+      const t = setTimeout(() => setMounted(false), 260);
+      return () => clearTimeout(t);
+    }
+  }, [open]);
+
+  if (!mounted) return null;
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, pointerEvents: 'auto' }}>
+      <div
+        onClick={onClose}
+        style={{
+          position: 'absolute', inset: 0,
+          background: 'rgba(0,0,0,0.55)',
+          backdropFilter: 'blur(6px)',
+          WebkitBackdropFilter: 'blur(6px)',
+          opacity: visible ? 1 : 0,
+          transition: 'opacity 240ms ease',
+        }}
+      />
+      <div style={{
+        position: 'absolute', left: 0, right: 0, bottom: 0,
+        background: 'linear-gradient(180deg, #141414 0%, #0d0d0d 100%)',
+        borderTopLeftRadius: 28, borderTopRightRadius: 28,
+        borderTop: '1px solid rgba(255,255,255,0.08)',
+        padding: '12px 18px 32px',
+        transform: visible ? 'translateY(0)' : 'translateY(100%)',
+        transition: 'transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+        boxShadow: '0 -20px 60px rgba(0,0,0,0.6)',
+        maxHeight: '88%',
+        display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{
+          width: 40, height: 4, borderRadius: 999,
+          background: 'rgba(255,255,255,0.18)',
+          margin: '4px auto 16px',
+        }}/>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+          <div style={{
+            fontSize: 20, fontWeight: 700, color: '#f0f0f0',
+            letterSpacing: '-0.01em',
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 32, height: 32, borderRadius: 10,
+              background: 'rgba(167,139,250,0.14)',
+              color: '#a78bfa',
+            }}>{Icon.plus(18)}</span>
+            קביעת שיעור חדש
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="סגור"
+            style={{
+              marginInlineStart: 'auto',
+              width: 36, height: 36, borderRadius: 999,
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              color: 'rgba(255,255,255,0.7)',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer',
+            }}
+          >{Icon.close(18)}</button>
+        </div>
+
+        <div style={{
+          fontSize: 13, color: 'rgba(255,255,255,0.45)',
+          marginBottom: 18, fontWeight: 500,
+        }}>בחר את סוג השיעור — תועבר ליומן הזמנים</div>
+
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 10,
+          overflowY: 'auto', paddingBottom: 4,
+        }}>
+          {BOOKING_OPTIONS.map(opt => (
+            <a
+              key={opt.id}
+              href={opt.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 14,
+                padding: '14px 16px',
+                borderRadius: 16,
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.07)',
+                textDecoration: 'none',
+                transition: 'background 160ms ease, transform 160ms ease, border-color 160ms ease',
+                WebkitTapHighlightColor: 'transparent',
+              }}
+              onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.985)'}
+              onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+              onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+            >
+              <div style={{
+                width: 44, height: 44, borderRadius: 12,
+                background: 'rgba(167,139,250,0.10)',
+                border: '1px solid rgba(167,139,250,0.22)',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 22,
+              }}>{opt.icon}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontSize: 15.5, fontWeight: 600, color: '#f0f0f0',
+                  letterSpacing: '-0.01em',
+                }}>{opt.title}</div>
+                <div style={{
+                  fontSize: 12.5, color: 'rgba(255,255,255,0.45)',
+                  marginTop: 2, fontWeight: 500,
+                }}>{opt.duration}</div>
+              </div>
+              <div style={{
+                fontSize: 15, fontWeight: 700, color: '#a78bfa',
+                fontFeatureSettings: '"tnum"',
+                marginInlineStart: 8,
+              }}>{opt.price}</div>
+              <div style={{ color: 'rgba(255,255,255,0.35)', marginInlineStart: 4 }}>
+                {Icon.arrowOut(15)}
+              </div>
+            </a>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Main App
+// ════════════════════════════════════════════════════════════════════
+function DrumApp() {
+  const [allLessons, setAllLessons] = useState([]);
+  const [tab, setTab] = useState('today');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [toast, setToastState] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const toastTimer = useRef(null);
+
+  const now = useMemo(() => new Date(), []);
+  const dateStr = formatHebrewDate(now);
+
+  const showToast = (message, accent) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToastState({ message, accent });
+    toastTimer.current = setTimeout(() => setToastState(null), 2400);
+  };
+
+  // ═══ Fetch lessons from n8n ═══
+  const fetchLessons = async (silent = false) => {
+    if (!silent) setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch(LESSONS_ENDPOINT);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const raw = Array.isArray(data) ? data : (data.lessons || []);
+
+      const normalized = raw.map(l => ({
+        id: l.id || l.eventId,
+        studentName: l.studentName || l.summary || '—',
+        lessonType: l.lessonType || '',
+        date: l.date,
+        time: l.time || '',
+        status: STATUS_TO_KEY[l.status] !== undefined ? STATUS_TO_KEY[l.status] : '',
+        dayLabel: l.date ? dayLabelFor(l.date) : '',
+        isToday: l.isToday,
+        // Group fields (only present on group lessons)
+        isGroup: !!l.isGroup,
+        groupName: l.groupName || '',
+        participants: Array.isArray(l.participants)
+          ? l.participants.map(p => ({
+              attendanceId: p.attendanceId,
+              studentName: p.studentName,
+              status: STATUS_TO_KEY[p.status] !== undefined ? STATUS_TO_KEY[p.status] : '',
+              price: p.price,
+              isPrivate: !!p.isPrivate,
+            }))
+          : [],
+      }));
+
+      setAllLessons(normalized);
+    } catch (err) {
+      console.error('Fetch error:', err);
+      setError('לא ניתן לטעון שיעורים. בדוק את החיבור.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchLessons(); }, []);
+
+  // ═══ Refresh button ═══
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await fetchLessons(true);
+    setRefreshing(false);
+    showToast('עודכן', '#a78bfa');
+  };
+
+  // ═══ Set status — optimistic + API call ═══
+  const setStatus = async (id, statusKey) => {
+    const prev = allLessons.find(l => l.id === id)?.status;
+    setAllLessons(list => list.map(l => l.id === id ? { ...l, status: statusKey } : l));
+    const meta = STATUS_META[statusKey];
+    showToast(`סומן כ${meta.label}`, meta.color);
+
+    try {
+      const res = await fetch(STATUS_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventId: id, status: KEY_TO_STATUS[statusKey] }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      console.error('Status update error:', err);
+      // Revert
+      setAllLessons(list => list.map(l => l.id === id ? { ...l, status: prev } : l));
+      showToast('שגיאה בעדכון. נסה שוב.', '#ef4444');
+    }
+  };
+
+  // ═══ Clear status ═══
+  const clearStatus = async (id) => {
+    const prev = allLessons.find(l => l.id === id)?.status;
+    setAllLessons(list => list.map(l => l.id === id ? { ...l, status: '' } : l));
+    showToast('הסטטוס אופס', '#a78bfa');
+
+    try {
+      const res = await fetch(STATUS_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventId: id, status: 'מתקיים' }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      console.error('Clear status error:', err);
+      setAllLessons(list => list.map(l => l.id === id ? { ...l, status: prev } : l));
+      showToast('שגיאה בעדכון. נסה שוב.', '#ef4444');
+    }
+  };
+
+  // ═══ Save group status — bulk update ═══
+  const saveGroupStatus = async (lessonId, updatedParticipants) => {
+    const prevLesson = allLessons.find(l => l.id === lessonId);
+    const prevParticipants = prevLesson?.participants || [];
+
+    // Optimistic local update
+    setAllLessons(list => list.map(l =>
+      l.id === lessonId ? { ...l, participants: updatedParticipants } : l
+    ));
+
+    // Build payload — only send participants whose status actually changed
+    const updates = updatedParticipants
+      .filter((p, i) => p.status !== prevParticipants[i]?.status)
+      .map(p => ({
+        attendanceId: p.attendanceId,
+        status: KEY_TO_STATUS[p.status] !== undefined ? KEY_TO_STATUS[p.status] : 'מתקיים',
+      }));
+
+    if (updates.length === 0) {
+      showToast('אין שינויים', '#a78bfa');
+      return;
+    }
+
+    try {
+      const res = await fetch(STATUS_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isGroup: true, updates }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      showToast(`נשמרו ${updates.length} סטטוסים`, '#22c55e');
+    } catch (err) {
+      console.error('Group save error:', err);
+      // Revert
+      setAllLessons(list => list.map(l =>
+        l.id === lessonId ? { ...l, participants: prevParticipants } : l
+      ));
+      showToast('שגיאה בשמירה. נסה שוב.', '#ef4444');
+    }
+  };
+
+  // ═══ Filter by tab ═══
+  const today = useMemo(() => {
+    const t = new Date();
+    t.setHours(0,0,0,0);
+    return allLessons.filter(l => {
+      if (!l.date) return false;
+      const d = new Date(l.date);
+      d.setHours(0,0,0,0);
+      return d.getTime() === t.getTime();
+    });
+  }, [allLessons]);
+
+  const week = useMemo(() => {
+    const t = new Date();
+    t.setHours(0,0,0,0);
+    return allLessons.filter(l => {
+      if (!l.date) return false;
+      const d = new Date(l.date);
+      d.setHours(0,0,0,0);
+      return d.getTime() > t.getTime();
+    });
+  }, [allLessons]);
+
+  const stats = useMemo(() => ({
+    total:   today.length,
+    done:    today.filter(l => l.status === 'done').length,
+    pending: today.filter(l => l.status === '').length,
+  }), [today]);
+
+  const list = tab === 'today' ? today : week;
+
+  return (
+    <div
+      dir="rtl"
+      lang="he"
+      style={{
+        position: 'relative',
+        height: '100%',
+        background: '#0a0a0a',
+        color: '#f0f0f0',
+        fontFamily: '"Heebo", system-ui, -apple-system, sans-serif',
+        display: 'flex', flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Ambient backdrop accents */}
+      <div aria-hidden="true" style={{
+        position: 'absolute', top: -120, right: -120, width: 320, height: 320,
+        borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(167,139,250,0.18) 0%, rgba(167,139,250,0) 70%)',
+        pointerEvents: 'none', zIndex: 0,
+      }}/>
+      <div aria-hidden="true" style={{
+        position: 'absolute', bottom: -160, left: -100, width: 320, height: 320,
+        borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(34,197,94,0.08) 0%, rgba(34,197,94,0) 70%)',
+        pointerEvents: 'none', zIndex: 0,
+      }}/>
+
+      {/* Header */}
+      <header style={{
+        position: 'relative', zIndex: 5,
+        padding: 'max(40px, env(safe-area-inset-top, 18px)) 18px 12px',
+        background: 'linear-gradient(180deg, rgba(10,10,10,0.96) 0%, rgba(10,10,10,0.7) 80%, rgba(10,10,10,0) 100%)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+          gap: 12, marginBottom: 14,
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{
+              fontSize: 12, color: 'rgba(255,255,255,0.45)',
+              fontWeight: 500, marginBottom: 4,
+            }}>{dateStr}</div>
+            <h1 style={{
+              fontSize: 26, fontWeight: 700, color: '#f0f0f0',
+              letterSpacing: '-0.025em', margin: 0,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span aria-hidden="true">🥁</span>
+              <span>השיעורים שלי</span>
+            </h1>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <button
+              onClick={handleRefresh}
+              aria-label="רענן"
+              style={{
+                width: 40, height: 40, borderRadius: 12,
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.07)',
+                color: 'rgba(255,255,255,0.65)',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'background 160ms ease',
+              }}
+            >
+              <span style={{
+                display: 'inline-flex',
+                animation: refreshing ? 'spin 700ms linear infinite' : 'none',
+              }}>{Icon.refresh(18)}</span>
+            </button>
+            <button
+              onClick={() => setModalOpen(true)}
+              aria-label="קבע שיעור חדש"
+              style={{
+                width: 40, height: 40, borderRadius: 12,
+                background: 'linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%)',
+                border: 'none',
+                color: '#fff',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer',
+                boxShadow: '0 6px 16px rgba(139,92,246,0.35), inset 0 1px 0 rgba(255,255,255,0.18)',
+              }}
+            >{Icon.plus(20)}</button>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <StatTile value={stats.total}   label="שיעורים היום" accent="#a78bfa" />
+          <StatTile value={stats.done}    label="הושלמו"        accent="#22c55e" />
+          <StatTile value={stats.pending} label="ממתינים"       accent="#f0f0f0" />
+        </div>
+
+        {/* Tabs */}
+        <div style={{
+          marginTop: 16,
+          display: 'flex', gap: 4, padding: 4,
+          borderRadius: 12,
+          background: 'rgba(255,255,255,0.04)',
+          border: '1px solid rgba(255,255,255,0.06)',
+        }}>
+          {[
+            { key: 'today', label: 'היום', count: today.length },
+            { key: 'week',  label: 'השבוע', count: week.length },
+          ].map(t => {
+            const active = tab === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                style={{
+                  flex: 1, height: 36,
+                  border: 'none',
+                  borderRadius: 9,
+                  background: active ? 'rgba(255,255,255,0.08)' : 'transparent',
+                  color: active ? '#f0f0f0' : 'rgba(255,255,255,0.5)',
+                  fontSize: 14, fontWeight: 600, fontFamily: 'inherit',
+                  cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  transition: 'all 160ms ease',
+                  boxShadow: active ? 'inset 0 0 0 1px rgba(255,255,255,0.06)' : 'none',
+                }}
+              >
+                <span>{t.label}</span>
+                <span style={{
+                  fontSize: 11, fontWeight: 600,
+                  padding: '2px 7px', borderRadius: 999,
+                  background: active ? 'rgba(167,139,250,0.18)' : 'rgba(255,255,255,0.05)',
+                  color: active ? '#c4b5fd' : 'rgba(255,255,255,0.45)',
+                  fontFeatureSettings: '"tnum"',
+                }}>{t.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      </header>
+
+      {/* Scrolling list */}
+      <main style={{
+        flex: 1, overflowY: 'auto',
+        padding: '8px 18px 32px',
+        position: 'relative', zIndex: 1,
+      }}>
+        {loading ? (
+          <LoadingState />
+        ) : error ? (
+          <ErrorState message={error} onRetry={() => fetchLessons()} />
+        ) : list.length === 0 ? (
+          <EmptyState message={tab === 'today' ? 'אין שיעורים היום' : 'אין שיעורים השבוע'} />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {list.map(l => (
+              l.isGroup ? (
+                <GroupLessonCard
+                  key={l.id}
+                  lesson={l}
+                  showDay={tab === 'week'}
+                  onSaveGroup={saveGroupStatus}
+                />
+              ) : (
+                <LessonCard
+                  key={l.id}
+                  lesson={l}
+                  showDay={tab === 'week'}
+                  onSetStatus={setStatus}
+                  onClearStatus={clearStatus}
+                />
+              )
+            ))}
+          </div>
+        )}
+      </main>
+
+      <Toast message={toast?.message} accent={toast?.accent} />
+      <BookingModal open={modalOpen} onClose={() => setModalOpen(false)} />
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Mount
+// ════════════════════════════════════════════════════════════════════
+ReactDOM.createRoot(document.getElementById('root')).render(<DrumApp />);
+  </script>
+</body>
+</html>
